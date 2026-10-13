@@ -14,7 +14,7 @@ from src.metadata_manager import load_records, metadata_path
 INDEX_FILENAME = "frames.faiss"
 METADATA_FILENAME = "frame_metadata.json"
 CONFIG_FILENAME = "index_config.json"
-EMBEDDING_FILENAME = "embeddings.npy"
+EMBEDDING_FILENAME = "frame_embeddings.npy"
 
 
 class ImageEncoder(Protocol):

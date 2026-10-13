@@ -1,6 +1,7 @@
 """Natural-language search over indexed video frames."""
 
 from __future__ import annotations
+from src.clip_grouping import group_matching_frames
 
 import json
 from dataclasses import dataclass
@@ -94,7 +95,9 @@ def search_query(
     top_k: int = 5,
     encoder: TextEncoder | None = None,
 ) -> list[SearchHit]:
-    #Encode query with CLIP and return the top matching frames.
+    """
+    Encode query with CLIP and return the top matching clips.
+    """
     if not query or not query.strip():
         raise ValueError("Query text must be non-empty.")
     if top_k <= 0:
@@ -116,32 +119,73 @@ def search_query(
             f"Query dim {text_vector.shape[1]} does not match index dim {index.d}"
         )
 
-    #find score and vector id of top k hits
-    k = min(top_k, index.ntotal)
-    scores, ids = index.search(text_vector, k)
-    #store top k hits in list
-    hits: list[SearchHit] = []
-    for rank, (score, faiss_id) in enumerate(zip(scores[0], ids[0], strict=True), start=1):
-        if faiss_id < 0:
-            continue
-        hits.append(record_to_hit(rank, float(score), records[int(faiss_id)]))
-    return hits
+    # Load embeddings for every indexed frame.
+    embeddings_path = index_dir / "frame_embeddings.npy"
+    if not embeddings_path.is_file():
+        raise FileNotFoundError(
+            f"Missing {embeddings_path}. "
+            "Save the frame embeddings when building the index."
+        )
+    #load embeddings to numpy
+    embeddings = np.load(embeddings_path)
+    if embeddings.shape[0] != len(records):
+        raise RuntimeError(
+            "The number of frame embeddings does not match metadata."
+        )
+
+    if embeddings.shape[1] != index.d:
+        raise RuntimeError(
+            "The saved embedding dimensions do not match the FAISS index."
+        )
+    # Compute cosine similarity against every frame (inner product since embeddings are L2 normalized)
+    scores = embeddings @ text_vector[0]
+
+     # Group high-scoring frames into time ranges.
+    clips = group_matching_frames(
+        records=records,
+        scores=scores,
+        threshold=0.2,
+        sample_interval_sec=2.0,
+        merge_gap_sec=2.0,
+        min_frames=2,
+    )
+
+    return clips[:top_k]
 
 
 def format_hits(query: str, hits: list[SearchHit]) -> str:
-    #print search results for the CLI
+    """print search results for the CLI"""
     if not hits:
         return f'No matches for "{query}".'
     lines = [f'Top {len(hits)} matches for "{query}":', ""]
-    for hit in hits:
+    for rank, clip in enumerate(hits, start=1):
+        start = clip["start_sec"]
+        end = clip["end_sec"]
+
         lines.append(
-            f"{hit.rank}. {hit.video_filename}  "
-            f"t={hit.timestamp_sec:.2f}s  "
-            f"score={hit.similarity:.4f}"
+            f"{rank}. {clip['video_filename']}  "
+            f"clip={format_timestamp(start)}–{format_timestamp(end)}  "
+            f"score={clip['score']:.4f}"
         )
-        if hit.frame_path:
-            lines.append(f"   {hit.frame_path}")
+
+        lines.append(
+            f"   Duration: {end - start:.2f}s  "
+            f"Matching frames: {clip['matched_frames']}"
+        )
+
+        if clip.get("video_path"):
+            lines.append(f"   Video: {clip['video_path']}")
+
     return "\n".join(lines)
+
+def format_timestamp(seconds: float) -> str:
+    """Convert seconds to HH:MM:SS."""
+    total_seconds = int(seconds)
+    hours = total_seconds // 3600
+    minutes = (total_seconds % 3600) // 60
+    secs = total_seconds % 60
+
+    return f"{hours:02d}:{minutes:02d}:{secs:02d}"
 
 
 def main(argv: list[str] | None = None) -> int:
