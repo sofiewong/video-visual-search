@@ -82,5 +82,5 @@ def replace_video_records(
 
 
 def load_records(csv_path: Path) -> list[dict[str, str]]:
-    """Load all metadata rows from ``csv_path``."""
+    #Load all metadata rows from csv_path
     return _read_rows(csv_path)
