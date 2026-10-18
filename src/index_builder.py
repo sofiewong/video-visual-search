@@ -10,6 +10,9 @@ import faiss
 import numpy as np
 
 from src.metadata_manager import load_records, metadata_path
+from src.database import initialize_database, save_frame_metadata
+from src.video_processor import FrameRecord
+
 
 INDEX_FILENAME = "frames.faiss"
 METADATA_FILENAME = "frame_metadata.json"
@@ -36,7 +39,9 @@ def _default_encoder() -> ImageEncoder:
 
 
 def _resolve_frame_path(row: dict[str, str], frames_dir: Path | None) -> Path | None:
-    #return path of image file
+    """
+    Return path of image file
+    """
     raw = (row.get("frame_path") or "").strip()
     if raw:
         path = Path(raw)
@@ -95,7 +100,7 @@ def load_indexable_rows(
 def save_index(
     index_dir: Path,
     embeddings: np.ndarray,
-    records: list[dict[str, Any]],
+    records: list[FrameRecord],
     model_name: str = "ViT-B/32",
 ) -> faiss.Index:
     """
@@ -124,11 +129,11 @@ def save_index(
     faiss.write_index(index, str(index_dir / INDEX_FILENAME))
     #save embeddings to numpy
     np.save(index_dir / EMBEDDING_FILENAME, embeddings)
-    #save metadata as JSON
-    (index_dir / METADATA_FILENAME).write_text(
-        json.dumps(records, indent=2),
-        encoding="utf-8",
-    )
+
+    #save metadata to database
+    initialize_database()
+    save_frame_metadata(records)
+
     config = {
         "model_name": model_name,
         "embedding_dim": int(embeddings.shape[1]),
@@ -144,7 +149,7 @@ def save_index(
 
 
 def build_index(
-    metadata_csv: str | Path = "data/processed/metadata.csv",
+    records: list[FrameRecord],
     index_dir: str | Path = "data/index",
     frames_dir: str | Path | None = None,
     batch_size: int = 32,
@@ -158,22 +163,45 @@ def build_index(
     batch_size: size of batch to process
     Returns the number of indexed frames.
     """
-    metadata_csv = Path(metadata_csv)
+    
     index_dir = Path(index_dir)
-    frames_dir_path = Path(frames_dir) if frames_dir is not None else metadata_csv.parent / "frames"
+    frames_dir_path = (
+        Path(frames_dir)
+        if frames_dir is not None
+        else None
+    )
 
     #load metadata of frames
-    rows, paths, skipped = load_indexable_rows(metadata_csv, frames_dir_path)
+    valid_records = []
+    paths = []
+    skipped = []
+    for record in records:
+        path = Path(record.frame_path)
+
+        # First try the path as stored in the record.
+        if not path.is_file() and frames_dir_path is not None:
+            path = frames_dir_path / path.name
+
+        if not path.is_file():
+            skipped.append(f"Missing frame: {record.frame_path}")
+            continue
+
+        valid_records.append(record)
+        paths.append(path)
+
     for message in skipped:
         print(f"  Skipping {message}")
-    if not rows:
-        raise ValueError("No valid frame images found. Extract frames before indexing.")
+
+    if not valid_records:
+        raise ValueError(
+            "No valid frame images found. Run frame extraction first."
+        )
 
     #encode frames
     encoder = encoder or _default_encoder()
     print(f"Encoding {len(paths)} frames with CLIP (batch_size={batch_size})...")
     embeddings = encoder.encode_images([str(path) for path in paths], batch_size=batch_size)
-    if embeddings.shape[0] != len(rows):
+    if embeddings.shape[0] != len(valid_records):
         raise RuntimeError("Encoder returned a different number of vectors than frames.")
 
     #get model name
@@ -183,10 +211,10 @@ def build_index(
         raise RuntimeError(f"Expected embedding dim {dim}, got {embeddings.shape[1]}")
 
     #save to index directory
-    save_index(index_dir, embeddings, rows, model_name=str(model_name))
-    print(f"Indexed {len(rows)} frames ({embeddings.shape[1]}-d).")
+    save_index(index_dir, embeddings, valid_records, model_name=str(model_name))
+    print(f"Indexed {len(valid_records)} frames ({embeddings.shape[1]}-d).")
     print(f"Saved FAISS index to {index_dir / INDEX_FILENAME}")
-    return len(rows)
+    return len(valid_records)
 
 
 def main(argv: list[str] | None = None) -> int:

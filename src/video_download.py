@@ -1,4 +1,8 @@
-"""Video downloader for testing"""
+"""
+Video downloader for testing
+
+Dataset: https://huggingface.co/datasets/HuggingFaceFV/finevideo#how-to-download-and-use-finevideo
+"""
 from datasets import load_dataset
 from huggingface_hub import login
 from pathlib import Path

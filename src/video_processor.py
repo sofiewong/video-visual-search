@@ -258,3 +258,4 @@ def resolve_video_targets(
                 f"{path.name}: skipped unsupported format '{path.suffix}'"
             )
     return videos, skipped
+

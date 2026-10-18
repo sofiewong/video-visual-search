@@ -7,12 +7,13 @@ import sys
 from pathlib import Path
 
 from src.index_builder import build_index
-from src.metadata_manager import metadata_path, replace_video_records
-from src.search import format_hits, search_query
+from src.search import format_hits, search_query 
+from src.database import replace_video_metadata, initialize_database, load_frame_records
 from src.video_processor import (
     VideoProcessingError,
     process_video,
     resolve_video_targets,
+    FrameRecord
 )
 
 COMMANDS = {"extract", "index", "search"}
@@ -114,7 +115,7 @@ def run_extract(args: argparse.Namespace) -> int:
     validate_extract_args(args)
     output_dir = args.output_dir.resolve()
     frames_dir = output_dir / "frames"
-    csv_file = metadata_path(output_dir)
+    DB_PATH =  output_dir / "metadata.db"
     frames_dir.mkdir(parents=True, exist_ok=True)
 
     try:
@@ -132,22 +133,25 @@ def run_extract(args: argparse.Namespace) -> int:
             print(f"  {message}", file=sys.stderr)
         return 1
 
+    
     succeeded = 0
     failed = 0
     frames_written = 0
     failures: list[str] = []
 
+    initialize_database()
+
     for index, path in enumerate(targets, start=1):
         print(f"Processing {path.name} ({index}/{len(targets)})...")
         try:
             video, records = process_video(path, frames_dir, args.interval)
+            replace_video_metadata(video.video_id, records)
         except VideoProcessingError as exc:
             failed += 1
             failures.append(str(exc))
             print(f"  Failed: {exc}")
             continue
 
-        replace_video_records(csv_file, video.video_id, records)
         succeeded += 1
         frames_written += len(records)
         print(
@@ -160,7 +164,7 @@ def run_extract(args: argparse.Namespace) -> int:
     print(f"  Videos processed: {succeeded}")
     print(f"  Videos failed:    {failed}")
     print(f"  Frames extracted: {frames_written}")
-    print(f"  Metadata:         {csv_file}")
+    print(f"  Metadata database: {DB_PATH.resolve()}")
     if skipped:
         print("  Skipped files:")
         for message in skipped:
@@ -178,12 +182,30 @@ def run_index(args: argparse.Namespace) -> int:
     if args.batch_size <= 0:
         raise SystemExit("--batch-size must be a positive integer.")
     try:
-        build_index(
-            metadata_csv=metadata_path(args.output_dir),
+        records = load_frame_records()
+
+        if not records:
+            raise ValueError(
+                "No extracted frame metadata found. Run extraction first."
+            )
+
+        # Convert dictionaries into FrameRecord objects.
+        records = [
+            FrameRecord(**record)
+            for record in records
+        ]
+
+        count = build_index(
+            records=records,
             index_dir=args.index_dir,
             frames_dir=args.output_dir / "frames",
             batch_size=args.batch_size,
         )
+        index_path = Path(args.index_dir) / "frames.faiss"
+        print(f"Indexed frames: {count}")
+        print(f"FAISS index: {index_path.resolve()}")
+        print(f"Index file exists: {index_path.is_file()}")
+
     except (FileNotFoundError, ValueError, RuntimeError) as exc:
         print(f"Error: {exc}", file=sys.stderr)
         return 1

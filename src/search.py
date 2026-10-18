@@ -12,6 +12,7 @@ import faiss
 import numpy as np
 
 from src.index_builder import INDEX_FILENAME, METADATA_FILENAME
+from src.database import get_all_frame_metadata
 
 
 class TextEncoder(Protocol):
@@ -42,16 +43,18 @@ def load_faiss_index(index_dir: Path) -> tuple[faiss.Index, list[dict[str, Any]]
     #Load the FAISS index and the metadata list aligned by vector id.
     #return FAISS index and list of metadata dictionaries
     index_path = index_dir / INDEX_FILENAME
-    meta_path = index_dir / METADATA_FILENAME
+    #meta_path = index_dir / METADATA_FILENAME
     if not index_path.is_file():
         raise FileNotFoundError(
             f"FAISS index not found: {index_path}. Run: python -m src.main index"
         )
-    if not meta_path.is_file():
-        raise FileNotFoundError(f"Index metadata not found: {meta_path}")
+    # if not meta_path.is_file():
+    #     raise FileNotFoundError(f"Index metadata not found: {meta_path}")
     #get faiss index matched and metadata
+
     index = faiss.read_index(str(index_path))
-    records = json.loads(meta_path.read_text(encoding="utf-8"))
+    #records = json.loads(meta_path.read_text(encoding="utf-8"))
+    records = get_all_frame_metadata()
     if index.ntotal != len(records):
         raise RuntimeError(
             f"Index/metadata mismatch: {index.ntotal} vectors vs {len(records)} rows"

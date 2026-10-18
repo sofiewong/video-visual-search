@@ -23,7 +23,7 @@ def group_matching_frames(
     if len(records) != len(scores):
         raise ValueError("Each frame must have exactly one similarity score.")
 
-    # Group frames by their source video.
+    # Group frames by their source video
     videos = defaultdict(list)
 
     for record, score in zip(records, scores):
@@ -34,7 +34,7 @@ def group_matching_frames(
     clips = []
 
     for video_id, frames in videos.items():
-        # Process frames in chronological order.
+        #process frames in chronological order
         frames.sort(key=lambda item: float(item[0]["timestamp_sec"]))
 
         #find matched frames
@@ -47,6 +47,7 @@ def group_matching_frames(
         if not matching:
             continue
 
+        #group nearby frames
         groups = []
         current_group = [matching[0]]
 
@@ -54,20 +55,23 @@ def group_matching_frames(
             record, score = item
             previous_record, _ = current_group[-1]
 
+            #calculate time gap between last and current frame
             time_gap = (
                 float(record["timestamp_sec"])
                 - float(previous_record["timestamp_sec"])
             )
 
+            #add frame if time gap is within the maximum time gap (<=one frame in between)
             if 0 <= time_gap <= sample_interval_sec + merge_gap_sec:
                 current_group.append(item)
             else:
                 groups.append(current_group)
                 current_group = [item]
 
+        #save last group
         groups.append(current_group)
 
-        # Convert groups of frames into clip ranges.
+        #convert groups of frames into clip ranges
         for group in groups:
             if len(group) < min_frames:
                 continue
@@ -77,6 +81,7 @@ def group_matching_frames(
 
             duration = float(first_record["duration_sec"])
 
+            #find start and end timestamp, padded by 1s
             start_sec = max(
                 0.0,
                 float(first_record["timestamp_sec"])
@@ -101,7 +106,7 @@ def group_matching_frames(
                 "matched_frames": len(group),
             })
 
-    # Show the most relevant clips first.
+    #sort clips by score
     clips.sort(key=lambda clip: clip["score"], reverse=True)
 
     return clips

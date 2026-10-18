@@ -20,7 +20,7 @@ DEFAULT_MODEL = "ViT-B/32"
 
 
 class CLIPEncoder:
-    #Encode images and text with CLIP ViT-B/32 into 512-d unit vectors.
+    """Encode images and text with CLIP ViT-B/32 into 512-d unit vectors."""
 
     dim: int = CLIP_DIM
 
@@ -35,7 +35,11 @@ class CLIPEncoder:
         image_paths: list[str] | list[Path],
         batch_size: int = 32,
     ) -> np.ndarray:
-        #Return (N, 512) array of normalized image embeddings.
+        """
+        Return (N, 512) array of normalized image embeddings
+        image_paths: path of images of frames
+        batch_size: batch size to process
+        """
         all_embeddings: list[np.ndarray] = []
 
         for start in range(0, len(image_paths), batch_size):
