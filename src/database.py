@@ -3,6 +3,7 @@
 
 import json
 import sqlite3
+from datetime import datetime, timezone
 from dataclasses import asdict, is_dataclass
 from pathlib import Path
 from typing import Any
@@ -20,6 +21,7 @@ def get_connection() -> sqlite3.Connection:
 def initialize_database() -> None:
     """Create the frames table if it does not exist."""
     with get_connection() as conn:
+        #table for frame metadata
         conn.execute("""
             CREATE TABLE IF NOT EXISTS frames (
                 faiss_id INTEGER PRIMARY KEY,
@@ -32,6 +34,16 @@ def initialize_database() -> None:
             )
         """)
 
+        #table to lookup if videos has been indexed or not
+        conn.execute("""
+        CREATE TABLE IF NOT EXISTS indexed_videos (
+            video_id TEXT PRIMARY KEY,
+            indexed_at TEXT NOT NULL,
+            frame_count INTEGER NOT NULL
+        )
+    """)
+
+        #index for timestamp
         conn.execute("""
             CREATE INDEX IF NOT EXISTS idx_video_timestamp
             ON frames (video_id, timestamp_sec)
@@ -51,25 +63,34 @@ def record_to_dict(record: Any) -> dict:
     )
 
 
-def save_frame_metadata(records: list[Any]) -> None:
+def save_frame_metadata(records: list[Any], append: bool = False,) -> None:
     """Replace frame metadata, assigning IDs in FAISS vector order."""
     rows = []
 
-    for faiss_id, record in enumerate(records):
-        data = record_to_dict(record)
-
-        rows.append((
-            faiss_id,
-            data["frame_id"],
-            data["video_id"],
-            data["frame_path"],
-            float(data["timestamp_sec"]),
-            int(data["frame_number"]),
-            json.dumps(data),
-        ))
-
     with get_connection() as conn:
-        conn.execute("DELETE FROM frames")
+        if append:
+            row = conn.execute(
+                "SELECT COALESCE(MAX(faiss_id), -1) AS max_id FROM frames"
+            ).fetchone()
+            starting_id = row["max_id"] + 1
+        else:
+            starting_id = 0
+            conn.execute("DELETE FROM frames")
+
+        for offset, record in enumerate(records):
+            data = record_to_dict(record)
+            faiss_id = starting_id + offset
+
+            rows.append((
+                faiss_id,
+                data["frame_id"],
+                data["video_id"],
+                data["frame_path"],
+                float(data["timestamp_sec"]),
+                int(data["frame_number"]),
+                json.dumps(data),
+            ))
+
         conn.executemany("""
             INSERT INTO frames (
                 faiss_id,
@@ -137,13 +158,37 @@ def replace_video_metadata(video_id: str, records: list[Any]) -> None:
             rows,
         )
 
-def load_frame_records() -> list[dict[str, Any]]:
-    """Load extracted frame metadata from SQLite in a stable order."""
+def load_unindexed_frame_records() -> list[dict]:
+    """Load frames belonging to videos not yet indexed."""
     with get_connection() as conn:
         rows = conn.execute("""
-            SELECT metadata_json
-            FROM frames
-            ORDER BY video_id, frame_number, frame_id
+            SELECT f.faiss_id, f.video_id, f.metadata_json
+            FROM frames AS f
+            LEFT JOIN indexed_videos AS v
+                ON f.video_id = v.video_id
+            WHERE v.video_id IS NULL
+            ORDER BY f.faiss_id
         """).fetchall()
 
-    return [json.loads(row["metadata_json"]) for row in rows]
+    return [
+        {
+            "faiss_id": row["faiss_id"],
+            "video_id": row["video_id"],
+            "record": json.loads(row["metadata_json"]),
+        }
+        for row in rows
+    ]
+
+
+def mark_video_indexed(video_id: str, frame_count: int) -> None:
+    """Mark a video as indexed after its vectors have been saved."""
+    with get_connection() as conn:
+        conn.execute("""
+            INSERT OR REPLACE INTO indexed_videos
+                (video_id, indexed_at, frame_count)
+            VALUES (?, ?, ?)
+        """, (
+            video_id,
+            datetime.now(timezone.utc).isoformat(),
+            frame_count,
+        ))

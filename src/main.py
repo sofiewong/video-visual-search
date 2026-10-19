@@ -8,7 +8,7 @@ from pathlib import Path
 
 from src.index_builder import build_index
 from src.search import format_hits, search_query 
-from src.database import replace_video_metadata, initialize_database, load_frame_records
+from src.database import replace_video_metadata, initialize_database, load_unindexed_frame_records
 from src.video_processor import (
     VideoProcessingError,
     process_video,
@@ -182,17 +182,19 @@ def run_index(args: argparse.Namespace) -> int:
     if args.batch_size <= 0:
         raise SystemExit("--batch-size must be a positive integer.")
     try:
-        records = load_frame_records()
+        items = load_unindexed_frame_records()
 
-        if not records:
-            raise ValueError(
-                "No extracted frame metadata found. Run extraction first."
-            )
+        if not items:
+            print("All videos are already indexed.")
+            return 0
 
-        # Convert dictionaries into FrameRecord objects.
         records = [
-            FrameRecord(**record)
-            for record in records
+            FrameRecord(**{
+                key: value
+                for key, value in item["record"].items()
+                if key in FrameRecord.__dataclass_fields__
+            })
+            for item in items
         ]
 
         count = build_index(

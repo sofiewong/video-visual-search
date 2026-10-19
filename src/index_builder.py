@@ -10,7 +10,7 @@ import faiss
 import numpy as np
 
 from src.metadata_manager import load_records, metadata_path
-from src.database import initialize_database, save_frame_metadata
+from src.database import save_frame_metadata,  mark_video_indexed
 from src.video_processor import FrameRecord
 
 
@@ -112,7 +112,7 @@ def save_index(
     """
     if embeddings.ndim != 2:
         raise ValueError(f"Embeddings must be 2-D, got shape {embeddings.shape}")
-    if embeddings.shape[0] != len(records):
+    if embeddings.shape[0] != len(records): 
         raise ValueError(
             f"Embedding count {embeddings.shape[0]} != metadata rows {len(records)}"
         )
@@ -122,17 +122,63 @@ def save_index(
 
     #make output directory
     index_dir.mkdir(parents=True, exist_ok=True)
-    #create index that search using cosine similarity (inner product of L2 norm vectors)
-    index = faiss.IndexFlatIP(embeddings.shape[1])
-    index.add(embeddings)
-    #write index to directory
-    faiss.write_index(index, str(index_dir / INDEX_FILENAME))
-    #save embeddings to numpy
-    np.save(index_dir / EMBEDDING_FILENAME, embeddings)
 
-    #save metadata to database
-    initialize_database()
-    save_frame_metadata(records)
+    index_path = index_dir / INDEX_FILENAME
+    embeddings_path = index_dir / EMBEDDING_FILENAME
+    config_path = index_dir / CONFIG_FILENAME
+    #create index that search using cosine similarity (inner product of L2 norm vectors)
+    if index_path.is_file():
+        index = faiss.read_index(str(index_path))
+
+        if index.d != embeddings.shape[1]:
+            raise ValueError("Embedding dimension does not match existing index.")
+        starting_id = index.ntotal
+
+        if not embeddings_path.is_file():
+            raise FileNotFoundError(
+                f"Existing embeddings file not found: {embeddings_path}"
+            )
+
+        old_embeddings = np.load(embeddings_path)
+        if old_embeddings.shape[0] != starting_id:
+            raise ValueError(
+                "Existing embedding count does not match FAISS index size."
+            )
+        
+        # Append new vectors to the existing index.
+        index.add(embeddings)
+
+        # Preserve old embeddings and append new ones.
+        all_embeddings = np.concatenate(
+            [old_embeddings, embeddings],
+            axis=0,
+        )
+
+        # Append metadata without deleting existing rows.
+        save_frame_metadata(records, append=True)
+    else:
+        # First index build.
+        starting_id = 0
+        index = faiss.IndexFlatIP(embeddings.shape[1])
+        # Save metadata of frame
+        save_frame_metadata(records, append=False)
+        index.add(embeddings)
+        all_embeddings = embeddings
+
+    # Save updated index and embeddings.
+    faiss.write_index(index, str(index_path))
+    np.save(embeddings_path, all_embeddings)
+
+    # Mark each video as indexed after saving the embeddings.
+    video_counts = {}
+
+    for record in records:
+        video_counts[record.video_id] = (
+            video_counts.get(record.video_id, 0) + 1
+        )
+
+    for video_id, frame_count in video_counts.items():
+        mark_video_indexed(video_id, frame_count)
 
     config = {
         "model_name": model_name,

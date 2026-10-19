@@ -51,7 +51,7 @@ class FrameRecord:
 
 
 def make_video_id(path: Path) -> str:
-    #Return a stable ID from the filename stem and a short path hash.
+    """Return a stable ID from the filename stem and a short path hash."""
     resolved = path.resolve()
     stem = re.sub(r"[^A-Za-z0-9._-]+", "_", resolved.stem).strip("._-") or "video"
     digest = hashlib.sha1(str(resolved).encode("utf-8")).hexdigest()[:8]
@@ -59,7 +59,7 @@ def make_video_id(path: Path) -> str:
 
 
 def list_videos(input_dir: Path) -> list[Path]:
-    #List supported video files in "input_dir"
+    """List supported video files in `input_dir` """
     if not input_dir.is_dir():
         raise FileNotFoundError(f"Input directory does not exist: {input_dir}")
 
@@ -71,7 +71,7 @@ def list_videos(input_dir: Path) -> list[Path]:
 
 
 def frame_number_to_timestamp(frame_number: int, fps: float) -> float:
-    #Convert frame index to timestamp
+    """Convert frame index to timestamp"""
     if fps <= 0:
         raise ValueError(f"fps must be positive, got {fps}")
     if frame_number < 0:
@@ -80,7 +80,7 @@ def frame_number_to_timestamp(frame_number: int, fps: float) -> float:
 
 
 def sample_frame_indices(fps: float, frame_count: int, interval_sec: float) -> list[int]:
-    #Return frame indices sampled every "interval_sec" seconds.
+    """Return frame indices sampled every `interval_sec` seconds"""
     if fps <= 0:
         raise ValueError(f"fps must be positive, got {fps}")
     if frame_count <= 0:
@@ -103,7 +103,7 @@ def sample_frame_indices(fps: float, frame_count: int, interval_sec: float) -> l
 
 
 def validate_video(path: Path) -> VideoInfo:
-    #Open video in path with OpenCV and return video properties
+    """Open video in path with OpenCV and return video properties"""
     if not path.is_file():
         raise VideoProcessingError(f"Video file not found: {path}")
     if path.suffix.lower() not in SUPPORTED_EXTENSIONS:
@@ -149,7 +149,7 @@ def validate_video(path: Path) -> VideoInfo:
 
 
 def _write_frame(image: np.ndarray, destination: Path) -> None:
-    #write image of frame to disk
+    """write image of frame to disk"""
     destination.parent.mkdir(parents=True, exist_ok=True)
     if not cv2.imwrite(str(destination), image):
         raise VideoProcessingError(f"Failed to write frame image: {destination}")
@@ -160,7 +160,13 @@ def extract_frames(
     frames_dir: Path,
     interval_sec: float,
 ) -> list[FrameRecord]:
-    #Extract sampled frames sequentially and return metadata records.
+    """
+    Extract sampled frames sequentially and return metadata records
+
+    `video`: metadata of video; 
+    `frame_dir`: path to output frame image; 
+    `interval_sec`: sampling frequency; 
+    """
 
     #assign indices for sampled frames
     indices = sample_frame_indices(video.fps, video.frame_count, interval_sec)
