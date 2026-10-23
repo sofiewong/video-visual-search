@@ -9,8 +9,15 @@ from typing import Any, Protocol
 import faiss
 import numpy as np
 
-from src.metadata_manager import load_records, metadata_path
-from src.database import save_frame_metadata,  mark_video_indexed
+from src.metadata_manager import load_records
+from src.database import (
+    delete_videos,
+    get_frame_video_ids,
+    get_video_paths,
+    load_unindexed_frame_records,
+    mark_video_indexed,
+    save_frame_metadata,
+)
 from src.video_processor import FrameRecord
 
 
@@ -154,16 +161,15 @@ def save_index(
             axis=0,
         )
 
-        # Append metadata without deleting existing rows.
-        save_frame_metadata(records, append=True)
     else:
         # First index build.
         starting_id = 0
         index = faiss.IndexFlatIP(embeddings.shape[1])
-        # Save metadata of frame
-        save_frame_metadata(records, append=False)
         index.add(embeddings)
         all_embeddings = embeddings
+
+    # Save metadata of frames aligned with their FAISS IDs.
+    save_frame_metadata(records, starting_id=starting_id)
 
     # Save updated index and embeddings.
     faiss.write_index(index, str(index_path))
@@ -200,6 +206,7 @@ def build_index(
     frames_dir: str | Path | None = None,
     batch_size: int = 32,
     encoder: ImageEncoder | None = None,
+    delete_frames: bool = True,
 ) -> int:
     """
     Encode each frame to a 512-d CLIP vector and store them in FAISS.
@@ -207,6 +214,7 @@ def build_index(
     index_dir: directory to save the index to
     frames_dir: optional frame directory
     batch_size: size of batch to process
+    delete_frames: delete frame images after their embeddings are saved
     Returns the number of indexed frames.
     """
     
@@ -260,7 +268,77 @@ def build_index(
     save_index(index_dir, embeddings, valid_records, model_name=str(model_name))
     print(f"Indexed {len(valid_records)} frames ({embeddings.shape[1]}-d).")
     print(f"Saved FAISS index to {index_dir / INDEX_FILENAME}")
+
+    #delete frame images now that embeddings are saved
+    if delete_frames:
+        deleted = 0
+        for path in paths:
+            try:
+                path.unlink()
+                deleted += 1
+            except OSError as exc:
+                print(f"  Could not delete {path}: {exc}")
+        print(f"Deleted {deleted} frame images.")
+
     return len(valid_records)
+
+
+def remove_deleted_videos(index_dir: str | Path = "data/index") -> list[str]:
+    """
+    Delete embeddings and metadata of videos whose source files no longer exist.
+    index_dir: directory containing the FAISS index
+    Returns the paths of the removed videos.
+    """
+    removed = {
+        video_id: video_path
+        for video_id, video_path in get_video_paths().items()
+        if video_path and not Path(video_path).is_file()
+    }
+    if not removed:
+        return []
+
+    index_dir = Path(index_dir)
+    index_path = index_dir / INDEX_FILENAME
+    embeddings_path = index_dir / EMBEDDING_FILENAME
+    if index_path.is_file():
+        index = faiss.read_index(str(index_path))
+        embeddings = np.load(embeddings_path)
+        if embeddings.shape[0] != index.ntotal:
+            raise ValueError(
+                "Existing embedding count does not match FAISS index size."
+            )
+
+        #keep vectors of frames whose video still exists
+        indexed_video_ids = get_frame_video_ids()[: index.ntotal]
+        keep = np.array(
+            [video_id not in removed for video_id in indexed_video_ids],
+            dtype=bool,
+        )
+        kept_embeddings = embeddings[keep]
+
+        #rebuild the index from the remaining vectors
+        new_index = faiss.IndexFlatIP(index.d)
+        new_index.add(kept_embeddings)
+        faiss.write_index(new_index, str(index_path))
+        np.save(embeddings_path, kept_embeddings)
+
+    #delete metadata and any leftover frame images
+    for frame_path in delete_videos(set(removed)):
+        Path(frame_path).unlink(missing_ok=True)
+
+    return sorted(removed.values())
+
+
+def load_unindexed_records() -> list[FrameRecord]:
+    """Return frame records for extracted videos that are not indexed yet."""
+    return [
+        FrameRecord(**{
+            key: value
+            for key, value in item["record"].items()
+            if key in FrameRecord.__dataclass_fields__
+        })
+        for item in load_unindexed_frame_records()
+    ]
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -269,16 +347,10 @@ def main(argv: list[str] | None = None) -> int:
 
     parser = argparse.ArgumentParser(description="Build a FAISS index from extracted frames.")
     parser.add_argument(
-        "--metadata",
-        type=Path,
-        default=None,
-        help="Path to metadata.csv (default: <output-dir>/metadata.csv).",
-    )
-    parser.add_argument(
         "--output-dir",
         type=Path,
         default=Path("data/processed"),
-        help="Processed-data directory containing metadata.csv and frames/.",
+        help="Processed-data directory containing frames/.",
     )
     parser.add_argument(
         "--index-dir",
@@ -288,10 +360,17 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--batch-size", type=int, default=32)
     args = parser.parse_args(argv)
-    csv_path = args.metadata if args.metadata is not None else metadata_path(args.output_dir)
     try:
+        for video_path in remove_deleted_videos(args.index_dir):
+            print(f"Removed deleted video: {video_path}")
+
+        records = load_unindexed_records()
+        if not records:
+            print("All videos are already indexed.")
+            return 0
+
         build_index(
-            metadata_csv=csv_path,
+            records=records,
             index_dir=args.index_dir,
             frames_dir=args.output_dir / "frames",
             batch_size=args.batch_size,

@@ -1,0 +1,16 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+env/
+*.egg-info/
+.DS_Store
+Thumbs.db
+
+data/videos/*
+!data/videos/.gitkeep
+data/processed/frames/*
+!data/processed/frames/.gitkeep
+data/processed/metadata.csv
+data/index/

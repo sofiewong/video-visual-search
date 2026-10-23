@@ -63,19 +63,21 @@ def record_to_dict(record: Any) -> dict:
     )
 
 
-def save_frame_metadata(records: list[Any], append: bool = False,) -> None:
-    """Replace frame metadata, assigning IDs in FAISS vector order."""
+def save_frame_metadata(records: list[Any], starting_id: int = 0) -> None:
+    """
+    Save frame metadata, assigning IDs in FAISS vector order.
+    records: metadata of each frame, in the order their vectors were added
+    starting_id: FAISS ID of the first record (the index size before adding)
+    """
     rows = []
 
     with get_connection() as conn:
-        if append:
-            row = conn.execute(
-                "SELECT COALESCE(MAX(faiss_id), -1) AS max_id FROM frames"
-            ).fetchone()
-            starting_id = row["max_id"] + 1
-        else:
-            starting_id = 0
-            conn.execute("DELETE FROM frames")
+        #rows at or above starting_id are not in the FAISS index
+        #(e.g. rows written during extraction), so replace them
+        conn.execute(
+            "DELETE FROM frames WHERE faiss_id >= ?",
+            (starting_id,),
+        )
 
         for offset, record in enumerate(records):
             data = record_to_dict(record)
@@ -128,7 +130,11 @@ def get_all_frame_metadata() -> list[dict]:
     return records
 
 def replace_video_metadata(video_id: str, records: list[Any]) -> None:
-    """Replace SQLite metadata for one video."""
+    """Replace SQLite metadata for one video that is not indexed yet."""
+    #deleting indexed rows would leave a gap in the FAISS IDs
+    if is_video_indexed(video_id):
+        raise ValueError(f"Video is already indexed: {video_id}")
+
     rows = []
 
     for record in records:
@@ -178,6 +184,91 @@ def load_unindexed_frame_records() -> list[dict]:
         }
         for row in rows
     ]
+
+
+def get_video_paths() -> dict[str, str]:
+    """Return the source video path of every video with stored frames."""
+    with get_connection() as conn:
+        rows = conn.execute("""
+            SELECT video_id, metadata_json
+            FROM frames
+            GROUP BY video_id
+        """).fetchall()
+
+    return {
+        row["video_id"]: json.loads(row["metadata_json"]).get("video_path") or ""
+        for row in rows
+    }
+
+
+def get_frame_video_ids() -> list[str]:
+    """Return the video ID of every frame in FAISS vector order."""
+    with get_connection() as conn:
+        rows = conn.execute(
+            "SELECT video_id FROM frames ORDER BY faiss_id"
+        ).fetchall()
+    return [row["video_id"] for row in rows]
+
+
+def delete_videos(video_ids: set[str]) -> list[str]:
+    """
+    Delete metadata for videos and renumber FAISS IDs so they stay contiguous.
+    Return the frame paths of the deleted rows.
+    """
+    if not video_ids:
+        return []
+    placeholders = ", ".join("?" for _ in video_ids)
+    params = tuple(video_ids)
+
+    with get_connection() as conn:
+        frame_paths = [
+            row["frame_path"]
+            for row in conn.execute(
+                f"SELECT frame_path FROM frames WHERE video_id IN ({placeholders})",
+                params,
+            )
+        ]
+        conn.execute(f"DELETE FROM frames WHERE video_id IN ({placeholders})", params)
+        conn.execute(
+            f"DELETE FROM indexed_videos WHERE video_id IN ({placeholders})",
+            params,
+        )
+
+        #shift remaining IDs down in ascending order so no ID collides
+        old_ids = [
+            row["faiss_id"]
+            for row in conn.execute("SELECT faiss_id FROM frames ORDER BY faiss_id")
+        ]
+        conn.executemany(
+            "UPDATE frames SET faiss_id = ? WHERE faiss_id = ?",
+            [
+                (new_id, old_id)
+                for new_id, old_id in enumerate(old_ids)
+                if new_id != old_id
+            ],
+        )
+
+    return frame_paths
+
+
+def get_frame_paths(video_id: str) -> list[str]:
+    """Return the stored frame image paths of one video."""
+    with get_connection() as conn:
+        rows = conn.execute(
+            "SELECT frame_path FROM frames WHERE video_id = ? ORDER BY faiss_id",
+            (video_id,),
+        ).fetchall()
+    return [row["frame_path"] for row in rows]
+
+
+def is_video_indexed(video_id: str) -> bool:
+    """Return True if the video's vectors are already in the FAISS index."""
+    with get_connection() as conn:
+        row = conn.execute(
+            "SELECT 1 FROM indexed_videos WHERE video_id = ?",
+            (video_id,),
+        ).fetchone()
+    return row is not None
 
 
 def mark_video_indexed(video_id: str, frame_count: int) -> None:

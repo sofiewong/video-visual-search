@@ -6,14 +6,19 @@ import argparse
 import sys
 from pathlib import Path
 
-from src.index_builder import build_index
-from src.search import format_hits, search_query 
-from src.database import replace_video_metadata, initialize_database, load_unindexed_frame_records
+from src.index_builder import build_index, load_unindexed_records, remove_deleted_videos
+from src.search import format_hits, search_query
+from src.database import (
+    get_frame_paths,
+    initialize_database,
+    is_video_indexed,
+    replace_video_metadata,
+)
 from src.video_processor import (
     VideoProcessingError,
+    make_video_id,
     process_video,
     resolve_video_targets,
-    FrameRecord
 )
 
 COMMANDS = {"extract", "index", "search"}
@@ -136,6 +141,8 @@ def run_extract(args: argparse.Namespace) -> int:
     
     succeeded = 0
     failed = 0
+    already_indexed = 0
+    already_extracted = 0
     frames_written = 0
     failures: list[str] = []
 
@@ -143,6 +150,18 @@ def run_extract(args: argparse.Namespace) -> int:
 
     for index, path in enumerate(targets, start=1):
         print(f"Processing {path.name} ({index}/{len(targets)})...")
+        video_id = make_video_id(path)
+        #skip indexed videos so their FAISS rows stay aligned
+        if is_video_indexed(video_id):
+            already_indexed += 1
+            print("  Skipped: already indexed")
+            continue
+        #skip extracted videos unless frame images are missing
+        frame_paths = get_frame_paths(video_id)
+        if frame_paths and all(Path(p).is_file() for p in frame_paths):
+            already_extracted += 1
+            print("  Skipped: already extracted")
+            continue
         try:
             video, records = process_video(path, frames_dir, args.interval)
             replace_video_metadata(video.video_id, records)
@@ -162,6 +181,8 @@ def run_extract(args: argparse.Namespace) -> int:
     print()
     print("Summary")
     print(f"  Videos processed: {succeeded}")
+    print(f"  Already extracted: {already_extracted}")
+    print(f"  Already indexed:  {already_indexed}")
     print(f"  Videos failed:    {failed}")
     print(f"  Frames extracted: {frames_written}")
     print(f"  Metadata database: {DB_PATH.resolve()}")
@@ -174,7 +195,7 @@ def run_extract(args: argparse.Namespace) -> int:
         for message in failures:
             print(f"    {message}")
 
-    return 0 if succeeded else 1
+    return 0 if succeeded or already_indexed or already_extracted else 1
 
 
 def run_index(args: argparse.Namespace) -> int:
@@ -182,20 +203,15 @@ def run_index(args: argparse.Namespace) -> int:
     if args.batch_size <= 0:
         raise SystemExit("--batch-size must be a positive integer.")
     try:
-        items = load_unindexed_frame_records()
+        #drop embeddings and metadata of videos removed from disk
+        for video_path in remove_deleted_videos(args.index_dir):
+            print(f"Removed deleted video: {video_path}")
 
-        if not items:
+        records = load_unindexed_records()
+
+        if not records:
             print("All videos are already indexed.")
             return 0
-
-        records = [
-            FrameRecord(**{
-                key: value
-                for key, value in item["record"].items()
-                if key in FrameRecord.__dataclass_fields__
-            })
-            for item in items
-        ]
 
         count = build_index(
             records=records,

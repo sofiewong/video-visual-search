@@ -40,8 +40,10 @@ def _default_encoder() -> TextEncoder:
 
 
 def load_faiss_index(index_dir: Path) -> tuple[faiss.Index, list[dict[str, Any]]]:
-    #Load the FAISS index and the metadata list aligned by vector id.
-    #return FAISS index and list of metadata dictionaries
+    """
+    Load the FAISS index and the metadata list aligned by vector id.
+    Return FAISS index and list of metadata dictionaries
+    """
     index_path = index_dir / INDEX_FILENAME
     #meta_path = index_dir / METADATA_FILENAME
     if not index_path.is_file():
