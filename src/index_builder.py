@@ -4,12 +4,11 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Protocol
 
 import faiss
 import numpy as np
 
-from src.metadata_manager import load_records
 from src.database import (
     delete_videos,
     get_frame_video_ids,
@@ -22,7 +21,6 @@ from src.video_processor import FrameRecord
 
 
 INDEX_FILENAME = "frames.faiss"
-METADATA_FILENAME = "frame_metadata.json"
 CONFIG_FILENAME = "index_config.json"
 EMBEDDING_FILENAME = "frame_embeddings.npy"
 
@@ -43,65 +41,6 @@ def _default_encoder() -> ImageEncoder:
     from src.clip_encoder import CLIPEncoder
 
     return CLIPEncoder()
-
-
-def _resolve_frame_path(row: dict[str, str], frames_dir: Path | None) -> Path | None:
-    """
-    Return path of image file
-    """
-    raw = (row.get("frame_path") or "").strip()
-    if raw:
-        path = Path(raw)
-        if path.is_file():
-            return path
-        if frames_dir is not None:
-            fallback = frames_dir / path.name
-            if fallback.is_file():
-                return fallback
-    filename = (row.get("frame_filename") or "").strip()
-    if frames_dir is not None and filename:
-        fallback = frames_dir / filename
-        if fallback.is_file():
-            return fallback
-    return None
-
-
-def load_indexable_rows(
-    metadata_csv: Path,
-    frames_dir: Path | None = None,
-) -> tuple[list[dict[str, str]], list[Path], list[str]]:
-    """
-    Return (rows, image paths, skipped messages) for frames that exist on disk.
-    metadata_csv: path of metadata record
-    frames_dir: optional frame directory
-    """
-    if not metadata_csv.is_file():
-        raise FileNotFoundError(
-            f"Metadata CSV not found: {metadata_csv}. Extract frames first."
-        )
-    #load all rows from metadata record
-    rows = load_records(metadata_csv)
-    #store frames w/ image files
-    valid_rows: list[dict[str, str]] = []
-    #store path of image
-    paths: list[Path] = []
-    #stored skipped messages
-    skipped: list[str] = []
-    for row in rows:
-        #get path
-        path = _resolve_frame_path(row, frames_dir)
-        if path is None:
-            #record skipped message
-            label = row.get("frame_filename") or row.get("frame_id") or "unknown"
-            skipped.append(f"{label}: image file not found")
-            continue
-        #add path, frames to valid_rows
-        row = dict(row)
-        row["frame_path"] = str(path.resolve())
-        valid_rows.append(row)
-        #save image path
-        paths.append(path.resolve())
-    return valid_rows, paths, skipped
 
 
 def save_index(
