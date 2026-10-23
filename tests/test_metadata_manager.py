@@ -6,7 +6,10 @@ from pathlib import Path
 
 from src.metadata_manager import (
     METADATA_FIELDS,
+    _read_rows,
+    _write_rows,
     load_records,
+    metadata_path,
     record_to_row,
     replace_video_records,
 )
@@ -73,3 +76,30 @@ def test_reprocessing_replaces_rows_for_same_video(tmp_path: Path) -> None:
     video_two = [row for row in rows if row["video_id"] == "video_two_bbb"]
     assert {row["frame_number"] for row in video_one} == {"0", "30"}
     assert len(video_two) == 1
+
+
+def test_metadata_path() -> None:
+    assert metadata_path(Path("out")) == Path("out") / "metadata.csv"
+
+
+def test_read_rows_missing_file_is_empty(tmp_path: Path) -> None:
+    assert _read_rows(tmp_path / "missing.csv") == []
+    assert load_records(tmp_path / "missing.csv") == []
+
+
+def test_write_rows_creates_dirs_and_header(tmp_path: Path) -> None:
+    csv_path = tmp_path / "nested" / "metadata.csv"
+    row = {**record_to_row(make_record("v", 0)), "extra": "dropped"}
+    _write_rows(csv_path, [row])
+    header = csv_path.read_text(encoding="utf-8").splitlines()[0]
+    assert header.split(",") == list(METADATA_FIELDS)
+    [loaded] = _read_rows(csv_path)
+    assert "extra" not in loaded
+    assert loaded["frame_id"] == "v_0"
+
+
+def test_write_rows_empty_writes_header_only(tmp_path: Path) -> None:
+    csv_path = tmp_path / "metadata.csv"
+    _write_rows(csv_path, [])
+    assert _read_rows(csv_path) == []
+    assert csv_path.read_text(encoding="utf-8").strip() == ",".join(METADATA_FIELDS)
