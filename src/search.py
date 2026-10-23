@@ -107,7 +107,7 @@ def search_query(
     clips = group_matching_frames(
         records=records,
         scores=scores,
-        threshold=0.2,
+        threshold=0.25,
         sample_interval_sec=2.0,
         merge_gap_sec=2.0,
         min_frames=2,
