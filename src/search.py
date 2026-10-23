@@ -56,7 +56,10 @@ def search_query(
     encoder: TextEncoder | None = None,
 ) -> list[dict]:
     """
-    Encode query with CLIP and return the top matching clips.
+    Encode query with CLIP and return the top matching videos.
+
+    Each result holds every matched clip in that video, and videos are
+    ranked by their best clip score.
     """
     if not query or not query.strip():
         raise ValueError("Query text must be non-empty.")
@@ -110,31 +113,54 @@ def search_query(
         min_frames=2,
     )
 
-    return clips[:top_k]
+    return group_clips_by_video(clips)[:top_k]
+
+
+def group_clips_by_video(clips: list[dict]) -> list[dict]:
+    """Group clips by video, ranked by each video's best clip score."""
+    videos: dict[Any, dict] = {}
+    for clip in clips:
+        video = videos.setdefault(clip["video_id"], {
+            "video_id": clip["video_id"],
+            "video_filename": clip["video_filename"],
+            "video_path": clip.get("video_path"),
+            "score": clip["score"],
+            "clips": [],
+        })
+        video["score"] = max(video["score"], clip["score"])
+        video["clips"].append(clip)
+
+    #show clips within a video in chronological order
+    for video in videos.values():
+        video["clips"].sort(key=lambda clip: clip["start_sec"])
+
+    return sorted(videos.values(), key=lambda video: video["score"], reverse=True)
 
 
 def format_hits(query: str, hits: list[dict]) -> str:
     """print search results for the CLI"""
     if not hits:
         return f'No matches for "{query}".'
-    lines = [f'Top {len(hits)} matches for "{query}":', ""]
-    for rank, clip in enumerate(hits, start=1):
-        start = clip["start_sec"]
-        end = clip["end_sec"]
-
+    lines = [f'Top {len(hits)} videos for "{query}":', ""]
+    for rank, video in enumerate(hits, start=1):
+        clips = video["clips"]
         lines.append(
-            f"{rank}. {clip['video_filename']}  "
-            f"clip={format_timestamp(start)}–{format_timestamp(end)}  "
-            f"score={clip['score']:.4f}"
+            f"{rank}. {video['video_filename']}  "
+            f"score={video['score']:.4f}  clips={len(clips)}"
         )
 
-        lines.append(
-            f"   Duration: {end - start:.2f}s  "
-            f"Matching frames: {clip['matched_frames']}"
-        )
+        if video.get("video_path"):
+            lines.append(f"   Video: {video['video_path']}")
 
-        if clip.get("video_path"):
-            lines.append(f"   Video: {clip['video_path']}")
+        for clip in clips:
+            start = clip["start_sec"]
+            end = clip["end_sec"]
+            lines.append(
+                f"   - clip={format_timestamp(start)}–{format_timestamp(end)}  "
+                f"score={clip['score']:.4f}  "
+                f"duration={end - start:.2f}s  "
+                f"matching frames={clip['matched_frames']}"
+            )
 
     return "\n".join(lines)
 
@@ -171,7 +197,7 @@ def main(argv: list[str] | None = None) -> int:
         "--top-k",
         type=int,
         default=5,
-        help="Number of matching frames to return (default: 5).",
+        help="Number of matching videos to return (default: 5).",
     )
     args = parser.parse_args(argv)
     query = args.query if args.query is not None else input("Enter a search query: ")

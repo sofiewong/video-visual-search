@@ -94,7 +94,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default=Path("data/index"),
         help="Directory containing frames.faiss (default: data/index).",
     )
-    search.add_argument("--top-k", type=int, default=5, help="Number of matches (default: 5).")
+    search.add_argument("--top-k", type=int, default=5, help="Number of videos (default: 5).")
 
     args = parser.parse_args(_normalize_argv(argv))
     if args.command is None:
