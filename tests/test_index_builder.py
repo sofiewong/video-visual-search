@@ -21,15 +21,12 @@ from src.index_builder import (
     EMBEDDING_FILENAME,
     INDEX_FILENAME,
     _default_encoder,
-    _resolve_frame_path,
     build_index,
-    load_indexable_rows,
     load_unindexed_records,
     main,
     remove_deleted_videos,
     save_index,
 )
-from src.metadata_manager import replace_video_records
 from tests.helpers import FakeEncoder, make_record, touch_frame
 
 
@@ -57,53 +54,6 @@ def test_default_encoder_constructs_clip_encoder(monkeypatch: pytest.MonkeyPatch
 
     monkeypatch.setattr(clip_encoder, "CLIPEncoder", FakeEncoder)
     assert isinstance(_default_encoder(), FakeEncoder)
-
-
-# _resolve_frame_path
-
-def test_resolve_frame_path_uses_existing_path(tmp_path: Path) -> None:
-    path = touch_frame(tmp_path / "a.jpg")
-    assert _resolve_frame_path({"frame_path": str(path)}, None) == path
-
-
-def test_resolve_frame_path_falls_back_to_frames_dir(tmp_path: Path) -> None:
-    path = touch_frame(tmp_path / "frames" / "a.jpg")
-    row = {"frame_path": "/old/location/a.jpg"}
-    assert _resolve_frame_path(row, tmp_path / "frames") == path
-
-
-def test_resolve_frame_path_uses_frame_filename(tmp_path: Path) -> None:
-    path = touch_frame(tmp_path / "frames" / "b.jpg")
-    row = {"frame_path": "", "frame_filename": "b.jpg"}
-    assert _resolve_frame_path(row, tmp_path / "frames") == path
-
-
-def test_resolve_frame_path_returns_none_when_missing(tmp_path: Path) -> None:
-    row = {"frame_path": "/nope/a.jpg", "frame_filename": "a.jpg"}
-    assert _resolve_frame_path(row, tmp_path) is None
-    assert _resolve_frame_path({}, None) is None
-
-
-# load_indexable_rows
-
-def test_load_indexable_rows_requires_csv(tmp_path: Path) -> None:
-    with pytest.raises(FileNotFoundError, match="Metadata CSV"):
-        load_indexable_rows(tmp_path / "missing.csv")
-
-
-def test_load_indexable_rows_splits_valid_and_missing(tmp_path: Path) -> None:
-    csv_path = tmp_path / "metadata.csv"
-    present = touch_frame(tmp_path / "frames" / "present.jpg")
-    records = [
-        make_record("v", 0, frame_path=present),
-        make_record("v", 60, frame_path=tmp_path / "frames" / "missing.jpg"),
-    ]
-    replace_video_records(csv_path, "v", records)
-
-    rows, paths, skipped = load_indexable_rows(csv_path, tmp_path / "frames")
-    assert paths == [present.resolve()]
-    assert rows[0]["frame_path"] == str(present.resolve())
-    assert len(skipped) == 1 and "not found" in skipped[0]
 
 
 # save_index

@@ -4,33 +4,18 @@ from __future__ import annotations
 from src.clip_grouping import group_matching_frames
 
 import json
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Protocol
 
 import faiss
 import numpy as np
 
-from src.index_builder import INDEX_FILENAME, METADATA_FILENAME
+from src.index_builder import INDEX_FILENAME
 from src.database import get_all_frame_metadata
 
 
 class TextEncoder(Protocol):
     def encode_text(self, query: str) -> np.ndarray: ...
-
-
-@dataclass(frozen=True)
-class SearchHit:
-    #One FAISS match joined back to source-frame metadata.
-
-    rank: int
-    video_filename: str
-    timestamp_sec: float
-    similarity: float
-    frame_id: str
-    frame_path: str
-    video_id: str
-    frame_number: int
 
 
 def _default_encoder() -> TextEncoder:
@@ -64,42 +49,12 @@ def load_faiss_index(index_dir: Path) -> tuple[faiss.Index, list[dict[str, Any]]
     return index, records
 
 
-def _as_float(value: Any, default: float = 0.0) -> float:
-    #convert to float
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        return default
-
-
-def _as_int(value: Any, default: int = 0) -> int:
-    #convert to int
-    try:
-        return int(float(value))
-    except (TypeError, ValueError):
-        return default
-
-
-def record_to_hit(rank: int, score: float, record: dict[str, Any]) -> SearchHit:
-    #Map a metadata row and similarity score to a search hit.
-    return SearchHit(
-        rank=rank,
-        video_filename=str(record.get("video_filename") or ""),
-        timestamp_sec=_as_float(record.get("timestamp_sec")),
-        similarity=float(score),
-        frame_id=str(record.get("frame_id") or ""),
-        frame_path=str(record.get("frame_path") or ""),
-        video_id=str(record.get("video_id") or ""),
-        frame_number=_as_int(record.get("frame_number")),
-    )
-
-
 def search_query(
     query: str,
     index_dir: str | Path = "data/index",
     top_k: int = 5,
     encoder: TextEncoder | None = None,
-) -> list[SearchHit]:
+) -> list[dict]:
     """
     Encode query with CLIP and return the top matching clips.
     """
@@ -158,7 +113,7 @@ def search_query(
     return clips[:top_k]
 
 
-def format_hits(query: str, hits: list[SearchHit]) -> str:
+def format_hits(query: str, hits: list[dict]) -> str:
     """print search results for the CLI"""
     if not hits:
         return f'No matches for "{query}".'

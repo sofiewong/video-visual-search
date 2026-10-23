@@ -10,15 +10,11 @@ import pytest
 import src.search as search
 from src.index_builder import EMBEDDING_FILENAME, save_index
 from src.search import (
-    SearchHit,
-    _as_float,
-    _as_int,
     _default_encoder,
     format_hits,
     format_timestamp,
     load_faiss_index,
     main,
-    record_to_hit,
     search_query,
 )
 from src.database import save_frame_metadata
@@ -68,37 +64,6 @@ def test_load_faiss_index_detects_metadata_mismatch(index_dir: Path) -> None:
 
 
 # helpers
-
-def test_as_float() -> None:
-    assert _as_float("2.5") == 2.5
-    assert _as_float(None) == 0.0
-    assert _as_float("abc", default=-1.0) == -1.0
-
-
-def test_as_int() -> None:
-    assert _as_int("60") == 60
-    assert _as_int("60.9") == 60
-    assert _as_int(None) == 0
-    assert _as_int("abc", default=-1) == -1
-
-
-def test_record_to_hit() -> None:
-    record = {
-        "video_filename": "ride.mp4",
-        "timestamp_sec": "2.0",
-        "frame_id": "ride_60",
-        "frame_path": "/f.jpg",
-        "video_id": "ride",
-        "frame_number": "60",
-    }
-    hit = record_to_hit(1, np.float32(0.75), record)
-    assert hit == SearchHit(1, "ride.mp4", 2.0, pytest.approx(0.75), "ride_60", "/f.jpg", "ride", 60)
-
-
-def test_record_to_hit_defaults_missing_fields() -> None:
-    hit = record_to_hit(3, 0.1, {})
-    assert hit.video_filename == "" and hit.timestamp_sec == 0.0 and hit.frame_number == 0
-
 
 def test_format_timestamp() -> None:
     assert format_timestamp(0) == "00:00:00"
